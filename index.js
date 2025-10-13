@@ -1,6 +1,10 @@
+import 'react-native-gesture-handler';
+import 'react-native-reanimated';
 import { registerRootComponent } from 'expo';
+import Constants from 'expo-constants';
+import fal from '@fal-ai/client';
 
-import App from './App';
+import App from './src/components/App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
 // It also ensures that whether you load the app in Expo Go or in a native build,
