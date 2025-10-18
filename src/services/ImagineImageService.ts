@@ -1,7 +1,7 @@
 import { ImagineImage } from '@models/ImagineImage';
 import { ImageGenerationClientInterface } from '@interfaces/ImageGenerationClientInterface';
 import { FalAIImageClient } from './FalAIImageClient';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export class ImagineImageService {
   private client: ImageGenerationClientInterface;
