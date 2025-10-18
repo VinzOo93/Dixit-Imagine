@@ -20,7 +20,7 @@ export default function CardView({
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
         <View style={[styles.content, { width, height }]}> 
-          <Image source={imageSource} style={styles.image} resizeMode="contain" />
+          <Image source={imageSource} style={styles.image} resizeMode="cover" />
         </View>
       </Pressable>
     </Modal>
