@@ -9,7 +9,11 @@ import CloudBurst from '../components/CloudBurst';
 import { CardImagine } from '@models/CardImagine';
 import { ImagineImageService } from '@services/ImagineImageService';
 
-export default function ImagineScreen() {
+interface ImagineScreenProps {
+  onBackToSession?: () => void;
+}
+
+export default function ImagineScreen({ onBackToSession }: ImagineScreenProps) {
   const [isCardViewVisible, setIsCardViewVisible] = useState(false);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [userText, setUserText] = useState<string | null>(null);
@@ -50,6 +54,11 @@ export default function ImagineScreen() {
     <View style={styles.container}>
       <StatusBar style="dark" />
       <SkyBackground fullScreen />
+      {onBackToSession && (
+        <TouchableOpacity style={styles.backButton} onPress={onBackToSession}>
+          <Text style={styles.backButtonText}>← Session</Text>
+        </TouchableOpacity>
+      )}
       <View style={styles.overlayContent}>
         {showCard && cardImagine && (
           <TouchableOpacity style={styles.cardContainer} activeOpacity={0.8} onPress={() => setIsCardViewVisible(true)}>
@@ -158,5 +167,30 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#B8860B',
     textAlign: 'center',
+  },
+  backButton: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    zIndex: 100,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
   },
 });
