@@ -38,6 +38,7 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
   const [isHost, setIsHost] = useState(false);
 
   const [Scanner, setScanner] = useState<any>(null);
+  const [scannerKind, setScannerKind] = useState<'barcodescanner' | 'cameraview' | null>(null);
   const [scannerError, setScannerError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,6 +48,8 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
       if (mode !== 'join') {
         // Reset permission state when leaving join mode
         setHasPermission(null);
+        setScanner(null);
+        setScannerKind(null);
         return;
       }
       try {
@@ -56,29 +59,63 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
           (NativeModulesProxy as any)?.ExpoBarCodeScanner ||
           (NativeModulesProxy as any)?.ExpoBarCodeScannerModule ||
           (NativeModulesProxy as any)?.ExpoBarCodeScannerView ||
-          (NativeModulesProxy as any)?.ExpoBarCodeScannerViewManager
+          (NativeModulesProxy as any)?.ExpoBarCodeScannerViewManager ||
+          // expo-camera (nouvelle API CameraView)
+          (NativeModulesProxy as any)?.ExpoCamera ||
+          (NativeModulesProxy as any)?.ExpoCameraView ||
+          (NativeModulesProxy as any)?.ExpoCameraViewManager
         );
         if (!hasNative) {
           setScannerError(
-            "Le module natif du scanner n'est pas présent dans cette build iOS. Installez une Dev Client (expo-dev-client) ou utilisez Expo Go compatible, puis reconstruisez."
+            "Le module natif du scanner n'est pas présent dans cette build. Installez une Dev Client (expo-dev-client) ou utilisez Expo Go compatible, puis reconstruisez."
           );
           setHasPermission(false);
           return;
         }
 
-        const mod: any = await import('expo-barcode-scanner');
+        const mod: any = await import('expo-camera');
         if (cancelled) return;
-        setScanner(mod.BarCodeScanner);
-        if (mod?.BarCodeScanner?.requestPermissionsAsync) {
-          const { status } = await mod.BarCodeScanner.requestPermissionsAsync();
-          if (cancelled) return;
-          setHasPermission(status === 'granted');
-        } else if (mod?.requestPermissionsAsync) {
-          const { status } = await mod.requestPermissionsAsync();
-          if (cancelled) return;
-          setHasPermission(status === 'granted');
+
+        // Préfère CameraView (API récente) puis fallback sur BarCodeScanner (API historique)
+        if (mod?.CameraView) {
+          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.CameraView, { ...props, ref }));
+          setScanner(() => Wrapped);
+          setScannerKind('cameraview');
+          // Permissions via Camera
+          if (mod?.Camera?.requestCameraPermissionsAsync) {
+            const { status } = await mod.Camera.requestCameraPermissionsAsync();
+            if (cancelled) return;
+            setHasPermission(status === 'granted');
+          } else if (mod?.requestCameraPermissionsAsync) {
+            const { status } = await mod.requestCameraPermissionsAsync();
+            if (cancelled) return;
+            setHasPermission(status === 'granted');
+          } else if (mod?.Camera?.requestPermissionsAsync) {
+            const { status } = await mod.Camera.requestPermissionsAsync();
+            if (cancelled) return;
+            setHasPermission(status === 'granted');
+          } else {
+            setScannerError('Impossible de demander la permission caméra. Rebuild requis.');
+            setHasPermission(false);
+          }
+        } else if (mod?.BarCodeScanner) {
+          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.BarCodeScanner, { ...props, ref }));
+          setScanner(() => Wrapped);
+          setScannerKind('barcodescanner');
+          if (mod?.BarCodeScanner?.requestPermissionsAsync) {
+            const { status } = await mod.BarCodeScanner.requestPermissionsAsync();
+            if (cancelled) return;
+            setHasPermission(status === 'granted');
+          } else if (mod?.requestPermissionsAsync) {
+            const { status } = await mod.requestPermissionsAsync();
+            if (cancelled) return;
+            setHasPermission(status === 'granted');
+          } else {
+            setScannerError('Module scanner indisponible (permissions). Rebuild requis.');
+            setHasPermission(false);
+          }
         } else {
-          setScannerError("Module scanner indisponible (permissions). Rebuild requis.");
+          setScannerError("Le module 'expo-camera' ne fournit ni CameraView ni BarCodeScanner. Mettez à jour expo-camera.");
           setHasPermission(false);
         }
       } catch (e) {
@@ -152,12 +189,27 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
     } catch (error: any) {
       console.error('Error joining session:', error);
       setError(error.message || 'Erreur lors de la connexion à la session');
-      Alert.alert('Erreur', error.message || 'Impossible de rejoindre la session. Vérifiez que vous êtes sur le même réseau Wi-Fi.');
-      setScanned(false);
-    } finally {
+      // Afficher l'alerte et ne réactiver le scanner qu'après fermeture par l'utilisateur
+      const message = error.message || 'Impossible de rejoindre la session. Vérifiez que vous êtes sur le même réseau Wi-Fi.';
+      Alert.alert(
+        'Erreur',
+        message,
+        [
+          {
+            text: 'OK',
+            onPress: () => setScanned(false),
+          },
+        ],
+        {
+          cancelable: true,
+          // S'assurer que le scanner est réactivé même si l'alerte est rejetée (Android back / tap extérieur)
+          onDismiss: () => setScanned(false),
+        } as any
+      );
+  } finally {
       setIsLoading(false);
-    }
-  };
+  }
+};
 
   const handleBarCodeScanned = ({ type, data }: BarCodeScannerResult) => {
     if (scanned) return;
@@ -171,10 +223,23 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
         throw new Error('QR code invalide');
       }
     } catch (error) {
-      Alert.alert('Erreur', 'QR code invalide. Veuillez scanner un QR code valide.');
-      setScanned(false);
-    }
-  };
+      // Pour éviter une boucle d'alertes, on ne réactive le scanner qu'après la fermeture de l'alerte
+      Alert.alert(
+        'Erreur',
+        'QR code invalide. Veuillez scanner un QR code valide.',
+        [
+          {
+            text: 'OK',
+            onPress: () => setScanned(false),
+          },
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => setScanned(false),
+        } as any
+      );
+  }
+};
 
   const handleLeaveSession = () => {
     console.log('handleLeaveSession appelé');
@@ -482,10 +547,19 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
 
     return (
       <View style={styles.scannerContainer}>
-        <ScannerComp
-          onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-          style={StyleSheet.absoluteFillObject}
-        />
+        {scannerKind === 'cameraview' ? (
+          <ScannerComp
+            style={StyleSheet.absoluteFillObject}
+            facing="back"
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+          />
+        ) : (
+          <ScannerComp
+            style={StyleSheet.absoluteFillObject}
+            onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+          />
+        )}
         <View style={styles.scannerOverlay}>
           <View style={styles.scannerFrame} />
           <Text style={styles.scannerText}>Scannez le QR code pour rejoindre</Text>
