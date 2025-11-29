@@ -12,9 +12,9 @@ import {
   Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { NativeModulesProxy } from 'expo-modules-core';
 import QRCode from 'react-native-qrcode-svg';
 import SkyBackground from '../components/SkyBackground';
+import { Camera } from "expo-camera";
 
 type ScreenMode = 'menu' | 'create' | 'join' | 'session';
 
@@ -42,93 +42,76 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
   const [scannerError, setScannerError] = useState<string | null>(null);
 
   useEffect(() => {
+          (async () => {
+              const { status } = await Camera.requestCameraPermissionsAsync();
+              console.log("CAMERA PERMISSION =", status);
+              setHasPermission(status === 'granted');
+              const loadScanner = async () => {
+                  if (mode !== 'join') {
+                      // Reset permission state when leaving join mode
+                      setHasPermission(null);
+                      setScanner(null);
+                      setScannerKind(null);
+                      return;
+                  }
+                  try {
+                      const mod: any = await import('expo-camera');
+                      if (cancelled) return;
+
+                      // Préfère CameraView (API récente) puis fallback sur BarCodeScanner (API historique)
+                      if (mod?.CameraView) {
+                          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.CameraView, { ...props, ref }));
+                          setScanner(() => Wrapped);
+                          setScannerKind('cameraview');
+                          // Permissions via Camera
+                          if (mod.Camera.requestCameraPermissionsAsync) {
+                              const { status } = await mod.Camera.requestCameraPermissionsAsync();
+                              if (cancelled) return;
+                              setHasPermission(status === 'granted');
+                          } else if (mod?.requestCameraPermissionsAsync) {
+                              const { status } = await mod.requestCameraPermissionsAsync();
+                              if (cancelled) return;
+                              setHasPermission(status === 'granted');
+                          } else if (mod?.Camera?.requestPermissionsAsync) {
+                              const { status } = await mod.Camera.requestPermissionsAsync();
+                              if (cancelled) return;
+                              setHasPermission(status === 'granted');
+                          } else {
+                              setScannerError('Impossible de demander la permission caméra. Rebuild requis.');
+                              setHasPermission(false);
+                          }
+                      } else if (mod?.BarCodeScanner) {
+                          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.BarCodeScanner, { ...props, ref }));
+                          setScanner(() => Wrapped);
+                          setScannerKind('barcodescanner');
+                          if (mod?.BarCodeScanner?.requestPermissionsAsync) {
+                              const { status } = await mod.BarCodeScanner.requestPermissionsAsync();
+                              if (cancelled) return;
+                              setHasPermission(status === 'granted');
+                          } else if (mod?.requestPermissionsAsync) {
+                              const { status } = await mod.requestPermissionsAsync();
+                              if (cancelled) return;
+                              setHasPermission(status === 'granted');
+                          } else {
+                              setScannerError('Module scanner indisponible (permissions). Rebuild requis.');
+                              setHasPermission(false);
+                          }
+                      } else {
+                          setScannerError("Le module 'expo-camera' ne fournit ni CameraView ni BarCodeScanner. Mettez à jour expo-camera.");
+                          setHasPermission(false);
+                      }
+                  } catch (e) {
+                      console.error('Erreur lors du chargement du scanner:', e);
+                      setScannerError(
+                          "Le module de scan n'est pas disponible sur cette build. Sur iOS, installez une Dev Client avec expo-dev-client ou utilisez Expo Go compatible, puis reconstruisez."
+                      );
+                      setHasPermission(false);
+                  }
+              };
+              await loadScanner();
+          })();
+
     let cancelled = false;
-
-    const loadScanner = async () => {
-      if (mode !== 'join') {
-        // Reset permission state when leaving join mode
-        setHasPermission(null);
-        setScanner(null);
-        setScannerKind(null);
-        return;
-      }
-      try {
-        // Vérifie la présence du module natif AVANT d'importer le paquet JS pour éviter le crash/iOS redbox
-        const hasNative = !!(
-          // différents noms possibles selon versions
-          (NativeModulesProxy as any)?.ExpoBarCodeScanner ||
-          (NativeModulesProxy as any)?.ExpoBarCodeScannerModule ||
-          (NativeModulesProxy as any)?.ExpoBarCodeScannerView ||
-          (NativeModulesProxy as any)?.ExpoBarCodeScannerViewManager ||
-          // expo-camera (nouvelle API CameraView)
-          (NativeModulesProxy as any)?.ExpoCamera ||
-          (NativeModulesProxy as any)?.ExpoCameraView ||
-          (NativeModulesProxy as any)?.ExpoCameraViewManager
-        );
-        if (!hasNative) {
-          setScannerError(
-            "Le module natif du scanner n'est pas présent dans cette build. Installez une Dev Client (expo-dev-client) ou utilisez Expo Go compatible, puis reconstruisez."
-          );
-          setHasPermission(false);
-          return;
-        }
-
-        const mod: any = await import('expo-camera');
-        if (cancelled) return;
-
-        // Préfère CameraView (API récente) puis fallback sur BarCodeScanner (API historique)
-        if (mod?.CameraView) {
-          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.CameraView, { ...props, ref }));
-          setScanner(() => Wrapped);
-          setScannerKind('cameraview');
-          // Permissions via Camera
-          if (mod?.Camera?.requestCameraPermissionsAsync) {
-            const { status } = await mod.Camera.requestCameraPermissionsAsync();
-            if (cancelled) return;
-            setHasPermission(status === 'granted');
-          } else if (mod?.requestCameraPermissionsAsync) {
-            const { status } = await mod.requestCameraPermissionsAsync();
-            if (cancelled) return;
-            setHasPermission(status === 'granted');
-          } else if (mod?.Camera?.requestPermissionsAsync) {
-            const { status } = await mod.Camera.requestPermissionsAsync();
-            if (cancelled) return;
-            setHasPermission(status === 'granted');
-          } else {
-            setScannerError('Impossible de demander la permission caméra. Rebuild requis.');
-            setHasPermission(false);
-          }
-        } else if (mod?.BarCodeScanner) {
-          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.BarCodeScanner, { ...props, ref }));
-          setScanner(() => Wrapped);
-          setScannerKind('barcodescanner');
-          if (mod?.BarCodeScanner?.requestPermissionsAsync) {
-            const { status } = await mod.BarCodeScanner.requestPermissionsAsync();
-            if (cancelled) return;
-            setHasPermission(status === 'granted');
-          } else if (mod?.requestPermissionsAsync) {
-            const { status } = await mod.requestPermissionsAsync();
-            if (cancelled) return;
-            setHasPermission(status === 'granted');
-          } else {
-            setScannerError('Module scanner indisponible (permissions). Rebuild requis.');
-            setHasPermission(false);
-          }
-        } else {
-          setScannerError("Le module 'expo-camera' ne fournit ni CameraView ni BarCodeScanner. Mettez à jour expo-camera.");
-          setHasPermission(false);
-        }
-      } catch (e) {
-        console.error('Erreur lors du chargement du scanner:', e);
-        setScannerError(
-          "Le module de scan n'est pas disponible sur cette build. Sur iOS, installez une Dev Client avec expo-dev-client ou utilisez Expo Go compatible, puis reconstruisez."
-        );
-        setHasPermission(false);
-      }
-    };
-
-    loadScanner();
-
     return () => {
       cancelled = true;
     };
