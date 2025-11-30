@@ -15,6 +15,11 @@ import { StatusBar } from 'expo-status-bar';
 import QRCode from 'react-native-qrcode-svg';
 import SkyBackground from '../components/SkyBackground';
 import { Camera } from "expo-camera";
+import { sessionEvents, type PlayerJoinedPayload } from '../services/SessionEvents';
+import { notifyHostPlayerJoined } from '../services/SessionNetwork';
+import * as Network from 'expo-network';
+import { startHostServer } from '../services/HostServer';
+
 
 type ScreenMode = 'menu' | 'create' | 'join' | 'session';
 
@@ -28,94 +33,117 @@ interface SessionConnectionInfo {
 }
 
 export default function SessionScreen({ onSessionReady }: { onSessionReady?: () => void }) {
-  const [mode, setMode] = useState<ScreenMode>('menu');
-  const [participantName, setParticipantName] = useState<string>('');
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
-  const [scanned, setScanned] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [connectionInfo, setConnectionInfo] = useState<SessionConnectionInfo | null>(null);
-  const [isHost, setIsHost] = useState(false);
+    const [mode, setMode] = useState<ScreenMode>('menu');
+    const [participantName, setParticipantName] = useState<string>('');
+    const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+    const [scanned, setScanned] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [connectionInfo, setConnectionInfo] = useState<SessionConnectionInfo | null>(null);
+    const [isHost, setIsHost] = useState(false);
 
-  const [Scanner, setScanner] = useState<any>(null);
-  const [scannerKind, setScannerKind] = useState<'barcodescanner' | 'cameraview' | null>(null);
-  const [scannerError, setScannerError] = useState<string | null>(null);
+    const [Scanner, setScanner] = useState<any>(null);
+    const [scannerKind, setScannerKind] = useState<'barcodescanner' | 'cameraview' | null>(null);
+    const [scannerError, setScannerError] = useState<string | null>(null);
 
-  useEffect(() => {
-          (async () => {
-              const { status } = await Camera.requestCameraPermissionsAsync();
-              console.log("CAMERA PERMISSION =", status);
-              setHasPermission(status === 'granted');
-              const loadScanner = async () => {
-                  if (mode !== 'join') {
-                      // Reset permission state when leaving join mode
-                      setHasPermission(null);
-                      setScanner(null);
-                      setScannerKind(null);
-                      return;
-                  }
-                  try {
-                      const mod: any = await import('expo-camera');
-                      if (cancelled) return;
+    // État côté hôte: suivi des joueurs qui ont rejoint
+    const [joinedPlayers, setJoinedPlayers] = useState<string[]>([]);
+    const [lastJoinedPlayer, setLastJoinedPlayer] = useState<string | null>(null);
 
-                      // Préfère CameraView (API récente) puis fallback sur BarCodeScanner (API historique)
-                      if (mod?.CameraView) {
-                          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.CameraView, { ...props, ref }));
-                          setScanner(() => Wrapped);
-                          setScannerKind('cameraview');
-                          // Permissions via Camera
-                          if (mod.Camera.requestCameraPermissionsAsync) {
-                              const { status } = await mod.Camera.requestCameraPermissionsAsync();
-                              if (cancelled) return;
-                              setHasPermission(status === 'granted');
-                          } else if (mod?.requestCameraPermissionsAsync) {
-                              const { status } = await mod.requestCameraPermissionsAsync();
-                              if (cancelled) return;
-                              setHasPermission(status === 'granted');
-                          } else if (mod?.Camera?.requestPermissionsAsync) {
-                              const { status } = await mod.Camera.requestPermissionsAsync();
-                              if (cancelled) return;
-                              setHasPermission(status === 'granted');
-                          } else {
-                              setScannerError('Impossible de demander la permission caméra. Rebuild requis.');
-                              setHasPermission(false);
-                          }
-                      } else if (mod?.BarCodeScanner) {
-                          const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.BarCodeScanner, { ...props, ref }));
-                          setScanner(() => Wrapped);
-                          setScannerKind('barcodescanner');
-                          if (mod?.BarCodeScanner?.requestPermissionsAsync) {
-                              const { status } = await mod.BarCodeScanner.requestPermissionsAsync();
-                              if (cancelled) return;
-                              setHasPermission(status === 'granted');
-                          } else if (mod?.requestPermissionsAsync) {
-                              const { status } = await mod.requestPermissionsAsync();
-                              if (cancelled) return;
-                              setHasPermission(status === 'granted');
-                          } else {
-                              setScannerError('Module scanner indisponible (permissions). Rebuild requis.');
-                              setHasPermission(false);
-                          }
-                      } else {
-                          setScannerError("Le module 'expo-camera' ne fournit ni CameraView ni BarCodeScanner. Mettez à jour expo-camera.");
-                          setHasPermission(false);
-                      }
-                  } catch (e) {
-                      console.error('Erreur lors du chargement du scanner:', e);
-                      setScannerError(
-                          "Le module de scan n'est pas disponible sur cette build. Sur iOS, installez une Dev Client avec expo-dev-client ou utilisez Expo Go compatible, puis reconstruisez."
-                      );
-                      setHasPermission(false);
-                  }
-              };
-              await loadScanner();
-          })();
+    // Abonnement aux événements "playerJoined" pour l'hôte
+    useEffect(() => {
+        if (!isHost) {
+            return; // pas d'abonnement si on n'est pas l'hôte
+        }
+        const unsubscribe = sessionEvents.on<PlayerJoinedPayload>('playerJoined', ({name}) => {
+            setJoinedPlayers(prev => (prev.includes(name) ? prev : [...prev, name]));
+            setLastJoinedPlayer(name);
+        });
+        return unsubscribe;
+    }, [isHost]);
 
-    let cancelled = false;
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
+    useEffect(() => {
+        (async () => {
+            const {status} = await Camera.requestCameraPermissionsAsync();
+            console.log("CAMERA PERMISSION =", status);
+            setHasPermission(status === 'granted');
+            const loadScanner = async () => {
+                if (mode !== 'join') {
+                    // Reset permission state when leaving join mode
+                    setHasPermission(null);
+                    setScanner(null);
+                    setScannerKind(null);
+                    return;
+                }
+                try {
+                    const mod: any = await import('expo-camera');
+                    if (cancelled) return;
+
+                    // Préfère CameraView (API récente) puis fallback sur BarCodeScanner (API historique)
+                    if (mod?.CameraView) {
+                        const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.CameraView, {
+                            ...props,
+                            ref
+                        }));
+                        setScanner(() => Wrapped);
+                        setScannerKind('cameraview');
+                        // Permissions via Camera
+                        if (mod.Camera.requestCameraPermissionsAsync) {
+                            const {status} = await mod.Camera.requestCameraPermissionsAsync();
+                            if (cancelled) return;
+                            setHasPermission(status === 'granted');
+                        } else if (mod?.requestCameraPermissionsAsync) {
+                            const {status} = await mod.requestCameraPermissionsAsync();
+                            if (cancelled) return;
+                            setHasPermission(status === 'granted');
+                        } else if (mod?.Camera?.requestPermissionsAsync) {
+                            const {status} = await mod.Camera.requestPermissionsAsync();
+                            if (cancelled) return;
+                            setHasPermission(status === 'granted');
+                        } else {
+                            setScannerError('Impossible de demander la permission caméra. Rebuild requis.');
+                            setHasPermission(false);
+                        }
+                    } else if (mod?.BarCodeScanner) {
+                        const Wrapped = React.forwardRef<any, any>((props, ref) => React.createElement(mod.BarCodeScanner, {
+                            ...props,
+                            ref
+                        }));
+                        setScanner(() => Wrapped);
+                        setScannerKind('barcodescanner');
+                        if (mod?.BarCodeScanner?.requestPermissionsAsync) {
+                            const {status} = await mod.BarCodeScanner.requestPermissionsAsync();
+                            if (cancelled) return;
+                            setHasPermission(status === 'granted');
+                        } else if (mod?.requestPermissionsAsync) {
+                            const {status} = await mod.requestPermissionsAsync();
+                            if (cancelled) return;
+                            setHasPermission(status === 'granted');
+                        } else {
+                            setScannerError('Module scanner indisponible (permissions). Rebuild requis.');
+                            setHasPermission(false);
+                        }
+                    } else {
+                        setScannerError("Le module 'expo-camera' ne fournit ni CameraView ni BarCodeScanner. Mettez à jour expo-camera.");
+                        setHasPermission(false);
+                    }
+                } catch (e) {
+                    console.error('Erreur lors du chargement du scanner:', e);
+                    setScannerError(
+                        "Le module de scan n'est pas disponible sur cette build. Sur iOS, installez une Dev Client avec expo-dev-client ou utilisez Expo Go compatible, puis reconstruisez."
+                    );
+                    setHasPermission(false);
+                }
+            };
+            await loadScanner();
+        })();
+
+        let cancelled = false;
+        return () => {
+            cancelled = true;
+        };
+    }, [mode]);
+    // Le serveur hôte est désormais géré par un service dédié (HostServer)
 
   const handleCreateSession = async () => {
     if (!participantName.trim()) {
@@ -129,10 +157,15 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
     try {
       // Simuler la création de session (à remplacer par l'implémentation réelle)
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const info: SessionConnectionInfo = {
+        const ip = await Network.getIpAddressAsync();
+        if (!ip) {
+            console.warn('Impossible de récupérer l’IP locale !');
+            return;
+        }
+
+        const info: SessionConnectionInfo = {
         sessionId: `session-${Date.now()}`,
-        hostIp: '192.168.1.1', // À récupérer dynamiquement
+        hostIp: ip,
         hostPort: 8080,
         protocol: 'http',
       };
@@ -142,6 +175,8 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
       setIsHost(true); // L'utilisateur est l'hôte
       setIsLoading(false); // Désactiver le loading avant de changer le mode
       setMode('create');
+
+      startHostServer(info.sessionId, info.hostPort);
     } catch (error: any) {
       console.error('Error creating session:', error);
       setError(error.message || 'Erreur lors de la création de la session');
@@ -160,12 +195,25 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
     setError(null);
 
     try {
-      // Simuler la connexion (à remplacer par l'implémentation réelle)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Étape 1: tenter de notifier l'hôte via le réseau local (endpoint attendu côté hôte)
+      // Cette étape n'est pas bloquante pour l'UX locale: en cas d'échec, on continue.
+      try {
+        const res = await notifyHostPlayerJoined(connectionInfo, participantName.trim(), {
+          timeoutMs: 3000,
+          retry: 1,
+        });
+        console.log('[Join] Notif hôte join:', res.status, res.ok);
+      } catch (netErr) {
+        console.warn('[Join] Impossible de notifier l\'hôte:', netErr);
+      }
+
+      // Étape 2: continuer le flux local
       setIsHost(false); // L'utilisateur n'est pas l'hôte
       setMode('session');
       setScanned(false);
-      
+      // Émettre l'événement local (utile pour tests mon appareil)
+      sessionEvents.emit<PlayerJoinedPayload>('playerJoined', { name: participantName.trim() });
+
       if (onSessionReady) {
         onSessionReady();
       }
@@ -248,6 +296,8 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
             setIsLoading(false);
             setConnectionInfo(null);
             setIsHost(false);
+            setJoinedPlayers([]);
+            setLastJoinedPlayer(null);
             // Changer le mode en dernier pour déclencher le re-render
             setMode('menu');
             console.log('Session quittée - États réinitialisés');
@@ -286,6 +336,8 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
                 setIsLoading(false);
                 setConnectionInfo(null);
                 setIsHost(false);
+                setJoinedPlayers([]);
+                setLastJoinedPlayer(null);
                 // Utiliser setTimeout pour s'assurer que le state est mis à jour
                 setTimeout(() => {
                   setMode('menu');
@@ -435,6 +487,19 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
               <Text style={styles.infoText}>Adresse: {connectionInfo.hostIp}:{connectionInfo.hostPort}</Text>
             </View>
 
+            {isHost && (
+              <View style={styles.infoContainer}>
+                <Text style={[styles.sectionSubtitle, { marginTop: 8 }]}>Joueurs rejoints:</Text>
+                {joinedPlayers.length === 0 ? (
+                  <Text style={styles.infoText}>En attente de joueurs…</Text>
+                ) : (
+                  joinedPlayers.map((name, idx) => (
+                    <Text key={name + idx} style={styles.infoText}>• {name}</Text>
+                  ))
+                )}
+              </View>
+            )}
+
             <View style={styles.createActions}>
               <TouchableOpacity
                 style={[styles.button, styles.playButton]}
@@ -571,6 +636,18 @@ export default function SessionScreen({ onSessionReady }: { onSessionReady?: () 
               <View style={styles.hostBadge}>
                 <Text style={styles.hostBadgeText}>Vous êtes l'hôte</Text>
               </View>
+            </View>
+          )}
+          {isHost && (
+            <View style={[styles.infoContainer, { alignSelf: 'stretch', marginTop: 12 }]}> 
+              <Text style={[styles.sectionSubtitle, { marginTop: 8 }]}>Joueurs rejoints:</Text>
+              {joinedPlayers.length === 0 ? (
+                <Text style={styles.infoText}>En attente de joueurs…</Text>
+              ) : (
+                joinedPlayers.map((name, idx) => (
+                  <Text key={name + idx} style={styles.infoText}>• {name}</Text>
+                ))
+              )}
             </View>
           )}
           <TouchableOpacity

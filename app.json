@@ -37,6 +37,13 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "EXPO_PUBLIC_STABILITY_API_KEY": "sk-KQfLdaRsI0JpsxT15YNe9oQY575tb7ZlIZgXZlBdRH8nb0ok",
+      "EXPO_PUBLIC_FAL_KEY": "51af3b59-b8c6-4570-b245-4939b8ac5ef8:fb85b79cd425c0ccd4610084cffc61a4",
+      "eas": {
+        "projectId": "4cf6e778-7589-4368-b5bb-143d12ac8c01"
+      }
     }
   }
 }
